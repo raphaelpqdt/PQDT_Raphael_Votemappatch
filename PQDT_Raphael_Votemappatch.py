@@ -20,6 +20,7 @@ from tkinter.scrolledtext import ScrolledText
 import pystray
 from PIL import Image, ImageDraw
 import win32com.client
+import pythoncom  # <--- ADICIONADO PARA INICIALIZAÇÃO COM
 
 # Configure logging
 logging.basicConfig(
@@ -90,7 +91,7 @@ class LogViewerApp:
 
     def set_application_icon(self):
         """Define o ícone da aplicação para a janela principal."""
-        global ICON_PATH  # Acessa a variável global ICON_PATH que já foi processada por resource_path
+        global ICON_PATH
         try:
             if not os.path.exists(ICON_PATH):
                 logging.warning(f"Arquivo de ícone '{ICON_PATH}' (resolvido de '{ICON_FILENAME}') não encontrado.")
@@ -101,9 +102,7 @@ class LogViewerApp:
                 logging.info(f"Ícone da aplicação (Windows) definido a partir de: {ICON_PATH}")
             else:
                 try:
-                    # Tenta carregar .ico com Pillow e depois passar para PhotoImage
                     img_pil = Image.open(ICON_PATH)
-                    # Converta para RGBA para melhor compatibilidade com PhotoImage, especialmente para transparência
                     img_pil_rgba = img_pil.convert("RGBA")
                     self.app_icon_image = tk.PhotoImage(data=img_pil_rgba.tobytes("raw", "RGBA"))
                     self.root.iconphoto(True, self.app_icon_image)
@@ -112,8 +111,7 @@ class LogViewerApp:
                     logging.warning(
                         "Pillow não está instalado. Tentando PhotoImage diretamente para o ícone (pode falhar para .ico).")
                     try:
-                        self.app_icon_image = tk.PhotoImage(
-                            file=ICON_PATH)  # Pode não funcionar bem para .ico sem Pillow
+                        self.app_icon_image = tk.PhotoImage(file=ICON_PATH)
                         self.root.iconphoto(True, self.app_icon_image)
                         logging.info(
                             f"Ícone da aplicação (não-Windows, PhotoImage direto) definido a partir de: {ICON_PATH}")
@@ -123,7 +121,6 @@ class LogViewerApp:
                 except Exception as e_pil:
                     logging.warning(
                         f"Falha ao carregar '{ICON_PATH}' com Pillow para {platform.system()}: {e_pil}. PhotoImage pode não suportar .ico diretamente.")
-
         except tk.TclError as e:
             logging.error(
                 f"Erro TclError ao definir o ícone da aplicação: {e}. Certifique-se que o arquivo de imagem é válido.",
@@ -133,20 +130,19 @@ class LogViewerApp:
 
     def _create_tray_image(self):
         """Cria uma imagem para o ícone da bandeja do sistema usando o ICON_PATH."""
-        global ICON_PATH  # Acessa a variável global ICON_PATH
+        global ICON_PATH
         try:
             if os.path.exists(ICON_PATH):
                 logging.info(f"Carregando ícone da bandeja de: {ICON_PATH}")
-                return Image.open(ICON_PATH)  # pystray usa bem objetos PIL.Image
+                return Image.open(ICON_PATH)
             else:
                 logging.warning(f"Arquivo de ícone da bandeja '{ICON_PATH}' não encontrado. Desenhando um padrão.")
-        except ImportError:  # Pillow não instalado
+        except ImportError:
             logging.warning(
                 "Pillow (PIL) não está instalado. Não é possível carregar o ícone da bandeja do arquivo. Desenhando padrão.")
         except Exception as e:
             logging.error(f"Erro ao carregar ícone da bandeja de '{ICON_PATH}': {e}. Desenhando um padrão.")
 
-        # Fallback: Desenha um ícone simples se o arquivo não for encontrado ou houver erro
         width, height = 64, 64
         image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
@@ -203,7 +199,8 @@ class LogViewerApp:
                 logging.error(f"Erro ao atualizar log do sistema na GUI: {e}", exc_info=False)
                 self._system_log_update_error_count = getattr(self, "_system_log_update_error_count", 0) + 1
         if not self._stop_event.is_set():
-            self.root.after(3000, self.atualizar_log_sistema_periodicamente)
+            if self.root.winfo_exists():
+                self.root.after(3000, self.atualizar_log_sistema_periodicamente)
 
     def create_menu(self):
         menubar = ttk.Menu(self.root)
@@ -406,13 +403,13 @@ class LogViewerApp:
             logging.error(f"Erro ao decodificar JSON em {self.config_file}: {e}", exc_info=True)
             Messagebox.show_error(
                 f"Erro ao carregar configuração de '{self.config_file}':\n{e}\nUsando configuração padrão.",
-                "Erro de Configuração")
+                "Erro de Configuração", parent=self.root)
             return {}
         except Exception as e:
             logging.error(f"Erro desconhecido ao carregar configuração de {self.config_file}: {e}", exc_info=True)
             Messagebox.show_error(
                 f"Erro desconhecido ao carregar '{self.config_file}':\n{e}\nUsando configuração padrão.",
-                "Erro de Configuração")
+                "Erro de Configuração", parent=self.root)
             return {}
 
     def load_config_dialog(self):
@@ -439,17 +436,19 @@ class LogViewerApp:
                 self.initialize_from_config()
                 self.status_label_var.set(f"Configuração carregada de {os.path.basename(caminho)}")
                 logging.info(f"Configuração carregada de {caminho}")
-                Messagebox.show_info("Configuração Carregada", f"Configuração carregada com sucesso de:\n{caminho}")
+                Messagebox.show_info("Configuração Carregada", f"Configuração carregada com sucesso de:\n{caminho}",
+                                     parent=self.root)
                 if self.pasta_raiz:
                     self.stop_log_monitoring()
                     self.start_log_monitoring()
             except json.JSONDecodeError as e:
                 logging.error(f"Erro ao decodificar JSON em {caminho}: {e}", exc_info=True)
                 Messagebox.show_error(f"Falha ao carregar configuração de '{caminho}':\nFormato JSON inválido.\n{e}",
-                                      "Erro de Configuração")
+                                      "Erro de Configuração", parent=self.root)
             except Exception as e:
                 logging.error(f"Erro ao carregar configuração de {caminho}: {e}", exc_info=True)
-                Messagebox.show_error(f"Falha ao carregar configuração de '{caminho}':\n{e}", "Erro de Configuração")
+                Messagebox.show_error(f"Falha ao carregar configuração de '{caminho}':\n{e}", "Erro de Configuração",
+                                      parent=self.root)
 
     def save_config(self):
         self.config = {
@@ -469,11 +468,11 @@ class LogViewerApp:
             logging.error(f"Erro de E/S ao salvar configuração: {e}", exc_info=True)
             Messagebox.show_error(
                 f"Não foi possível salvar o arquivo de configuração:\n{self.config_file}\n\n{e.strerror}",
-                "Erro ao Salvar")
+                "Erro ao Salvar", parent=self.root)
         except Exception as e:
             self.status_label_var.set(f"Erro desconhecido ao salvar configuração: {e}")
             logging.error(f"Erro desconhecido ao salvar configuração: {e}", exc_info=True)
-            Messagebox.show_error(f"Ocorreu um erro ao salvar a configuração:\n{e}", "Erro ao Salvar")
+            Messagebox.show_error(f"Ocorreu um erro ao salvar a configuração:\n{e}", "Erro ao Salvar", parent=self.root)
 
     def selecionar_pasta(self):
         pasta_selecionada = filedialog.askdirectory(title="Selecione a pasta raiz dos logs do servidor")
@@ -514,17 +513,17 @@ class LogViewerApp:
                 err_msg = f"Erro: Arquivo JSON de {tipo_json} não encontrado em '{caminho}'."
                 self.status_label_var.set(err_msg);
                 logging.error(err_msg)
-                Messagebox.show_error(err_msg, "Arquivo não encontrado")
+                Messagebox.show_error(err_msg, "Arquivo não encontrado", parent=self.root)
             except json.JSONDecodeError:
                 err_msg = f"Erro: Arquivo JSON de {tipo_json} ('{os.path.basename(caminho)}') não é um JSON válido."
                 self.status_label_var.set(err_msg);
                 logging.error(err_msg)
-                Messagebox.show_error(err_msg, "JSON Inválido")
+                Messagebox.show_error(err_msg, "JSON Inválido", parent=self.root)
             except Exception as e:
                 err_msg = f"Erro ao carregar JSON de {tipo_json} '{os.path.basename(caminho)}': {e}"
                 self.status_label_var.set(err_msg);
                 logging.error(err_msg, exc_info=True)
-                Messagebox.show_error(err_msg, "Erro de Leitura")
+                Messagebox.show_error(err_msg, "Erro de Leitura", parent=self.root)
 
     def selecionar_arquivo_json_servidor(self):
         self._selecionar_arquivo_json("servidor")
@@ -553,77 +552,137 @@ class LogViewerApp:
     def selecionar_servico(self):
         progress_win, _ = self._show_progress_dialog("Serviços", "Carregando lista de serviços...")
         self.root.update_idletasks()
+        threading.Thread(target=self._obter_servicos_worker, args=(progress_win,), daemon=True).start()
 
-        def _listar_e_mostrar_servicos():
-            try:
-                wmi = win32com.client.GetObject('winmgmts:')
-                services_raw = wmi.InstancesOf('Win32_Service')
-                nomes_servicos = sorted([s.Name for s in services_raw if
-                                         s.AcceptStop and s.AcceptPauseContinue is False and "driver" not in s.PathName.lower() and s.StartMode != "Disabled"])
-            except Exception as e:
-                logging.error(f"Erro ao listar serviços WMI: {e}", exc_info=True);
-                progress_win.destroy()
-                Messagebox.show_error(f"Erro ao obter lista de serviços:\n{e}", "Erro WMI")
-                return
+    def _obter_servicos_worker(self, progress_win):
+        pythoncom.CoInitialize()
+        try:
+            wmi = win32com.client.GetObject('winmgmts:')
+            services_raw = wmi.InstancesOf('Win32_Service')
+
+            nomes_servicos_temp = []
+            logging.info(f"Total de serviços brutos encontrados: {len(services_raw)}")  # Log inicial
+
+            for i, s in enumerate(services_raw):
+                # Log inicial para cada serviço
+                # logging.debug(f"Processando serviço bruto #{i}: {getattr(s, 'Name', 'N/A')}")
+
+                # Filtro MUITO simplificado para teste
+                if hasattr(s, 'Name') and s.Name and hasattr(s, 'AcceptStop') and s.AcceptStop:
+                    nomes_servicos_temp.append(s.Name)
+                    # logging.debug(f"  -> Adicionado (filtro simples): {s.Name}")
+                # else:
+                # if not (hasattr(s, 'Name') and s.Name):
+                #     logging.debug(f"  -> Rejeitado (filtro simples): Sem nome ou nome vazio. ({getattr(s, 'Name', 'N/A')})")
+                # elif not (hasattr(s, 'AcceptStop') and s.AcceptStop):
+                #     logging.debug(f"  -> Rejeitado (filtro simples): Não aceita parada. ({s.Name}, AcceptStop: {getattr(s, 'AcceptStop', 'N/A')})")
+
+            logging.info(f"Serviços após filtro simples: {len(nomes_servicos_temp)}")
+            nomes_servicos = sorted(nomes_servicos_temp)
+            self.root.after(0, self._mostrar_dialogo_selecao_servico, nomes_servicos, progress_win)
+
+        except Exception as e:
+            # ... (código de tratamento de erro permanece o mesmo)
+            logging.error(f"Erro ao listar serviços WMI: {e}", exc_info=True)
+            error_message = str(e)
+            if hasattr(e, 'args') and isinstance(e.args, tuple) and len(e.args) > 0:
+                error_code = e.args[0]
+                error_text = e.args[1] if len(e.args) > 1 else "Descrição não disponível"
+                detailed_description = ""
+                if len(e.args) > 2 and e.args[2] and isinstance(e.args[2], tuple) and len(e.args[2]) > 2 and e.args[2][
+                    2]:
+                    detailed_description = e.args[2][2]
+                error_message = f"Código: {error_code}\nErro: {error_text}"
+                if detailed_description:
+                    error_message += f"\nDetalhes: {detailed_description}"
+            self.root.after(0, self._handle_erro_listar_servicos, error_message, progress_win)
+        finally:
+            pythoncom.CoUninitialize()
+
+    def _handle_erro_listar_servicos(self, error_message, progress_win):
+        if progress_win and progress_win.winfo_exists():
             progress_win.destroy()
-            if not nomes_servicos: Messagebox.show_warning("Nenhum serviço gerenciável encontrado.",
-                                                           "Seleção de Serviço"); return
-            dialog = ttk.Toplevel(self.root);
-            dialog.title("Selecionar Serviço do Jogo")
-            dialog.geometry("500x400");
-            dialog.transient(self.root);
-            dialog.grab_set()
-            ttk.Label(dialog, text="Escolha o serviço do servidor do jogo:", font="-size 10").pack(pady=(10, 5))
-            search_frame = ttk.Frame(dialog);
-            search_frame.pack(fill='x', padx=10)
-            ttk.Label(search_frame, text="Buscar:").pack(side='left')
-            search_var = ttk.StringVar();
-            search_entry = ttk.Entry(search_frame, textvariable=search_var)
-            search_entry.pack(side='left', fill='x', expand=True, padx=5)
-            list_frame = ttk.Frame(dialog);
-            list_frame.pack(fill='both', expand=True, padx=10, pady=5)
-            scrollbar = ttk.Scrollbar(list_frame);
-            scrollbar.pack(side='right', fill='y')
-            listbox = ttk.Treeview(list_frame, columns=("name",), show="headings", selectmode="browse")
-            listbox.heading("name", text="Nome do Serviço");
-            listbox.column("name", width=450)
-            listbox.pack(side='left', fill='both', expand=True)
-            listbox.config(yscrollcommand=scrollbar.set);
-            scrollbar.config(command=listbox.yview)
-            all_items = {name: listbox.insert("", "end", values=(name,)) for name in nomes_servicos}
+        Messagebox.show_error(f"Erro ao obter lista de serviços:\n{error_message}", "Erro WMI", parent=self.root)
 
-            def _filter_services(event=None):
-                query = search_var.get().lower()
-                for item_id in listbox.get_children(): listbox.delete(item_id)
-                for name, item_id_original_ref_not_needed in all_items.items():
-                    if query in name.lower(): listbox.insert("", "end", values=(name,))
+    def _mostrar_dialogo_selecao_servico(self, nomes_servicos, progress_win):
+        if progress_win and progress_win.winfo_exists():
+            progress_win.destroy()
 
-            search_entry.bind("<KeyRelease>", _filter_services);
-            _filter_services()
+        if not nomes_servicos:
+            Messagebox.show_warning("Nenhum serviço gerenciável encontrado.",
+                                    "Seleção de Serviço", parent=self.root)
+            return
 
-            def on_confirm():
-                selection = listbox.selection()
-                if selection:
-                    service_name = listbox.item(selection[0])["values"][0]
-                    self.nome_servico = service_name;
-                    self.servico_var.set(f"Serviço: {service_name}")
-                    self.status_label_var.set(f"Serviço selecionado: {service_name}")
-                    logging.info(f"Serviço selecionado: {service_name}");
-                    dialog.destroy()
-                else:
-                    Messagebox.show_warning("Nenhum serviço selecionado.", parent=dialog)
+        dialog = ttk.Toplevel(self.root)
+        dialog.title("Selecionar Serviço do Jogo")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
 
-            btn_frame = ttk.Frame(dialog);
-            btn_frame.pack(pady=10)
-            ttk.Button(btn_frame, text="Confirmar", command=on_confirm, bootstyle=SUCCESS).pack(side='left', padx=5)
-            ttk.Button(btn_frame, text="Cancelar", command=dialog.destroy, bootstyle=DANGER).pack(side='left', padx=5)
-            dialog.update_idletasks()
-            x = (self.root.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
-            y = (self.root.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
-            dialog.geometry(f'+{x}+{y}');
-            search_entry.focus_set()
+        ttk.Label(dialog, text="Escolha o serviço do servidor do jogo:", font="-size 10").pack(pady=(10, 5))
 
-        threading.Thread(target=_listar_e_mostrar_servicos, daemon=True).start()
+        search_frame = ttk.Frame(dialog)
+        search_frame.pack(fill='x', padx=10)
+        ttk.Label(search_frame, text="Buscar:").pack(side='left')
+        search_var = ttk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+        list_frame = ttk.Frame(dialog)
+        list_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+
+        listbox = ttk.Treeview(list_frame, columns=("name",), show="headings", selectmode="browse")
+        listbox.heading("name", text="Nome do Serviço")
+        listbox.column("name", width=450)
+        listbox.pack(side='left', fill='both', expand=True)
+        listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=listbox.yview)
+
+        def _populate_listbox(query=""):
+            for item in listbox.get_children():
+                listbox.delete(item)
+            filter_query = query.lower()
+            for name in nomes_servicos:
+                if not filter_query or filter_query in name.lower():
+                    listbox.insert("", "end", values=(name,))
+
+        def _on_search_key_release(event=None):
+            _populate_listbox(search_var.get())
+
+        search_entry.bind("<KeyRelease>", _on_search_key_release)
+        _populate_listbox()
+
+        def on_confirm():
+            selection = listbox.selection()
+            if selection:
+                selected_item = listbox.item(selection[0])
+                service_name = selected_item["values"][0]
+                self.nome_servico = service_name
+                self.servico_var.set(f"Serviço: {service_name}")
+                self.status_label_var.set(f"Serviço selecionado: {service_name}")
+                logging.info(f"Serviço selecionado: {service_name}")
+                dialog.destroy()
+            else:
+                Messagebox.show_warning("Nenhum serviço selecionado.", parent=dialog)
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Confirmar", command=on_confirm, bootstyle=SUCCESS).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancelar", command=dialog.destroy, bootstyle=DANGER).pack(side='left', padx=5)
+
+        dialog.update_idletasks()
+        ws = dialog.winfo_screenwidth()
+        hs = dialog.winfo_screenheight()
+        w = dialog.winfo_width()
+        h = dialog.winfo_height()
+        x = (ws / 2) - (w / 2)
+        y = (hs / 2) - (h / 2)
+        dialog.geometry(f'+{int(x)}+{int(y)}')
+        search_entry.focus_set()
+        dialog.wait_window()
 
     def exibir_json(self, text_area_widget, conteudo_json):
         try:
@@ -696,13 +755,18 @@ class LogViewerApp:
             return max(subpastas, key=os.path.getmtime)
         except FileNotFoundError:
             logging.warning(
-                f"Pasta raiz '{self.pasta_raiz}' não encontrada ao buscar subpastas."); self.pasta_raiz = None; return None
+                f"Pasta raiz '{self.pasta_raiz}' não encontrada ao buscar subpastas.");
+            self.pasta_raiz = None;
+            return None
         except PermissionError:
             logging.error(
-                f"Permissão negada ao acessar '{self.pasta_raiz}' para buscar subpastas."); self.pasta_raiz = None; return None
+                f"Permissão negada ao acessar '{self.pasta_raiz}' para buscar subpastas.");
+            self.pasta_raiz = None;
+            return None
         except Exception as e:
             logging.error(f"Erro ao obter subpasta mais recente em '{self.pasta_raiz}': {e}",
-                          exc_info=True); return None
+                          exc_info=True);
+            return None
 
     def acompanhar_log_do_arquivo(self):
         if not self.file_log_handle: logging.error("Tentativa de acompanhar log sem um file_log_handle válido."); return
@@ -766,7 +830,8 @@ class LogViewerApp:
         logging.info(f"Acompanhamento de {self.caminho_log_atual} encerrado.")
         if self.file_log_handle:
             try:
-                self.file_log_handle.close(); self.file_log_handle = None
+                self.file_log_handle.close();
+                self.file_log_handle = None
             except:
                 pass
 
@@ -866,7 +931,6 @@ class LogViewerApp:
     def verificar_status_servico(self, nome_servico):
         if not nome_servico: return "NOT_FOUND"
         try:
-            # Para Windows, ocultar a janela do console
             startupinfo = None
             if platform.system() == "Windows":
                 startupinfo = subprocess.STARTUPINFO()
@@ -874,16 +938,12 @@ class LogViewerApp:
                 startupinfo.wShowWindow = subprocess.SW_HIDE
 
             result = subprocess.run(['sc', 'query', nome_servico], capture_output=True, text=True, check=False,
-                                    startupinfo=startupinfo, encoding='latin-1')  # Tentar latin-1 para sc
+                                    startupinfo=startupinfo, encoding='latin-1')
 
-            # Tratamento de erro para serviço não encontrado (pode variar com o idioma do OS)
-            # Adicionar mais strings de erro se necessário
             service_not_found_errors = [
-                "failed 1060",  # Inglês
-                "falha 1060",  # Português
-                "지정된 서비스를 설치된 서비스로 찾을 수 없습니다."  # Coreano (do seu código original)
+                "failed 1060", "falha 1060", "지정된 서비스를 설치된 서비스로 찾을 수 없습니다."
             ]
-            output_lower = result.stdout.lower() + result.stderr.lower()  # Combinar stdout e stderr para checagem de erro
+            output_lower = result.stdout.lower() + result.stderr.lower()
             for err_string in service_not_found_errors:
                 if err_string in output_lower:
                     return "NOT_FOUND"
@@ -901,19 +961,21 @@ class LogViewerApp:
         except FileNotFoundError:
             logging.error("'sc.exe' não encontrado. Verifique se o System32 está no PATH.", exc_info=True)
             Messagebox.show_error("Comando 'sc.exe' não encontrado. Verifique as configurações do sistema.",
-                                  "Erro de Comando");
+                                  "Erro de Comando", parent=self.root);
             return "ERROR"
         except Exception as e:
-            logging.error(f"Erro ao verificar status do serviço '{nome_servico}': {e}", exc_info=True); return "ERROR"
+            logging.error(f"Erro ao verificar status do serviço '{nome_servico}': {e}", exc_info=True);
+            return "ERROR"
 
     def reiniciar_servidor_com_progresso(self, novo_scenario_id_para_log):
         progress_win, pb = self._show_progress_dialog("Reiniciando Servidor", f"Reiniciando {self.nome_servico}...")
         self.root.update_idletasks()
         success = self._reiniciar_servidor_logica(novo_scenario_id_para_log)
-        pb.stop();
-        progress_win.destroy()
+        if progress_win.winfo_exists():  # Verificar se a janela ainda existe
+            pb.stop()
+            progress_win.destroy()
         if success: Messagebox.show_info("Servidor Reiniciado",
-                                         f"O serviço {self.nome_servico} foi reiniciado com sucesso.")
+                                         f"O serviço {self.nome_servico} foi reiniciado com sucesso.", parent=self.root)
 
     def _reiniciar_servidor_logica(self, novo_scenario_id_para_log):
         if not self.nome_servico:
@@ -926,7 +988,6 @@ class LogViewerApp:
         start_delay = self.start_delay_var.get();
         default_votemap_mission = self.default_mission_var.get()
 
-        # Ocultar janela do console para comandos sc
         startupinfo = None
         if platform.system() == "Windows":
             startupinfo = subprocess.STARTUPINFO()
@@ -940,7 +1001,7 @@ class LogViewerApp:
             status = self.verificar_status_servico(self.nome_servico)
             if status == "RUNNING" or status == "START_PENDING":
                 subprocess.run(["sc", "stop", self.nome_servico], check=True, shell=False,
-                               startupinfo=startupinfo)  # shell=False é mais seguro
+                               startupinfo=startupinfo)
                 self.append_text_gui(f"Comando de parada enviado. Aguardando {stop_delay}s...\n");
                 time.sleep(stop_delay)
                 status_after_stop = self.verificar_status_servico(self.nome_servico)
@@ -949,7 +1010,8 @@ class LogViewerApp:
                     self.append_text_gui(
                         f"AVISO: Serviço '{self.nome_servico}' pode não ter parado. Status: {status_after_stop}\n")
             elif status == "STOPPED":
-                self.append_text_gui(f"Serviço '{self.nome_servico}' já estava parado.\n"); logging.info(
+                self.append_text_gui(f"Serviço '{self.nome_servico}' já estava parado.\n");
+                logging.info(
                     f"Serviço {self.nome_servico} já estava parado.")
             elif status == "NOT_FOUND":
                 self.append_text_gui(f"ERRO: Serviço '{self.nome_servico}' não encontrado.\n");
@@ -967,7 +1029,7 @@ class LogViewerApp:
             self.append_text_gui(f"Iniciando serviço '{self.nome_servico}'...\n")
             logging.info(f"Tentando iniciar o serviço: {self.nome_servico}")
             subprocess.run(["sc", "start", self.nome_servico], check=True, shell=False,
-                           startupinfo=startupinfo)  # shell=False
+                           startupinfo=startupinfo)
             self.append_text_gui(
                 f"Comando de início enviado. Aguardando {start_delay}s para o servidor estabilizar...\n")
             self.status_label_var.set(f"Aguardando {self.nome_servico} iniciar ({start_delay}s)...");
@@ -990,7 +1052,6 @@ class LogViewerApp:
                 return False
             with open(self.arquivo_json, 'r+', encoding='utf-8') as f_srv:
                 server_data = json.load(f_srv);
-                # mapa_carregado_anteriormente = server_data["game"]["scenarioId"] # Guardar se necessário
                 server_data["game"]["scenarioId"] = default_votemap_mission
                 f_srv.seek(0);
                 json.dump(server_data, f_srv, indent=4);
@@ -1002,14 +1063,28 @@ class LogViewerApp:
                 f"Servidor reiniciado. Mapa anterior: {os.path.basename(str(novo_scenario_id_para_log))}. Próximo: Votação.")
             return True
         except subprocess.CalledProcessError as e:
-            err_output = e.stderr or e.stdout or "Nenhuma saída de erro."
-            err_msg = f"Erro ao executar comando 'sc' para '{self.nome_servico}': {err_output}"
+            err_output = ""
+            if e.stderr:
+                try:
+                    err_output = e.stderr.decode('latin-1', errors='replace')
+                except:
+                    err_output = str(e.stderr)
+            elif e.stdout:
+                try:
+                    err_output = e.stdout.decode('latin-1', errors='replace')
+                except:
+                    err_output = str(e.stdout)
+            else:
+                err_output = "Nenhuma saída de erro detalhada."
+
+            err_msg = f"Erro ao executar comando 'sc' para '{self.nome_servico}': {err_output.strip()}"
             self.append_text_gui(f"ERRO: {err_msg}\n");
             logging.error(err_msg, exc_info=True)
             self.status_label_var.set(f"Erro ao gerenciar serviço: {e.cmd}");
             return False
-        except FileNotFoundError:  # sc.exe não encontrado
-            Messagebox.show_error("Comando 'sc.exe' não encontrado. Verifique o PATH.", "Erro de Comando");
+        except FileNotFoundError:
+            Messagebox.show_error("Comando 'sc.exe' não encontrado. Verifique o PATH.", "Erro de Comando",
+                                  parent=self.root);
             logging.error("Comando 'sc.exe' não encontrado.")
             self.status_label_var.set("Erro: sc.exe não encontrado.");
             return False
@@ -1057,13 +1132,15 @@ class LogViewerApp:
             self.style.theme_use(novo_tema);
             logging.info(f"Tema alterado para: {novo_tema}")
             self.status_label_var.set(f"Tema alterado para '{novo_tema}'.")
-        except Exception as e:  # ttk.TclError
+        except Exception as e:
             logging.error(f"Erro ao tentar trocar para o tema '{novo_tema}': {e}", exc_info=True)
-            Messagebox.show_error(f"Não foi possível aplicar o tema '{novo_tema}'.\n{e}", "Erro de Tema")
+            Messagebox.show_error(f"Não foi possível aplicar o tema '{novo_tema}'.\n{e}", "Erro de Tema",
+                                  parent=self.root)
             try:
-                self.style.theme_use("litera"); self.tema_var.set("litera")  # Fallback
+                self.style.theme_use("litera");
+                self.tema_var.set("litera")
             except:
-                pass  # Em caso extremo
+                pass
 
     def export_display_logs(self):
         caminho_arquivo = filedialog.asksaveasfilename(defaultextension=".txt",
@@ -1077,11 +1154,12 @@ class LogViewerApp:
                 self.status_label_var.set(f"Logs da tela exportados para: {os.path.basename(caminho_arquivo)}")
                 logging.info(f"Logs da tela exportados para: {caminho_arquivo}")
                 Messagebox.show_info("Exportação Concluída",
-                                     f"Logs da tela foram exportados com sucesso para:\n{caminho_arquivo}")
+                                     f"Logs da tela foram exportados com sucesso para:\n{caminho_arquivo}",
+                                     parent=self.root)
             except Exception as e:
                 self.status_label_var.set(f"Erro ao exportar logs da tela: {e}")
                 logging.error(f"Erro ao exportar logs da tela para {caminho_arquivo}: {e}", exc_info=True)
-                Messagebox.show_error(f"Falha ao exportar logs da tela:\n{e}", "Erro de Exportação")
+                Messagebox.show_error(f"Falha ao exportar logs da tela:\n{e}", "Erro de Exportação", parent=self.root)
 
     def validate_configs(self):
         problemas = []
@@ -1122,7 +1200,7 @@ class LogViewerApp:
         frame = ttk.Frame(about_win, padding=20);
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text="Predadores Votemap Patch", font="-size 16 -weight bold").pack(pady=(0, 10))
-        ttk.Label(frame, text="Versão 2.2 (Ícone Integrado)", font="-size 10").pack()  # Versão atualizada
+        ttk.Label(frame, text="Versão 2.2 (Ícone Integrado)", font="-size 10").pack()
         ttk.Separator(frame).pack(fill='x', pady=10)
         desc = ("Ferramenta para monitorar logs de servidores de jogos,\n"
                 "detectar votações de mapa e automatizar a troca\n"
@@ -1141,9 +1219,9 @@ class LogViewerApp:
         x = (self.root.winfo_screenwidth() // 2) - (about_win.winfo_width() // 2)
         y = (self.root.winfo_screenheight() // 2) - (about_win.winfo_height() // 2)
         about_win.geometry(f'+{x}+{y}')
+        about_win.wait_window()
 
     def setup_tray_icon(self):
-        """Configura e inicia o ícone na bandeja do sistema."""
         try:
             image = self._create_tray_image()
             if image is None:
@@ -1152,26 +1230,26 @@ class LogViewerApp:
 
             menu = pystray.Menu(
                 pystray.MenuItem('Mostrar Predadores Votemap', self.show_from_tray, default=True),
-                pystray.MenuItem('Sair', self.on_close_from_tray)  # Usar método específico para sair da bandeja
+                pystray.MenuItem('Sair', self.on_close_from_tray)
             )
             self.tray_icon = pystray.Icon("predadores_votemap_patch", image, "Predadores Votemap Patch", menu)
-            self.tray_icon.run_detached()
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
             logging.info("Ícone da bandeja do sistema configurado e iniciado.")
         except Exception as e:
             logging.error(f"Falha ao criar ícone da bandeja: {e}", exc_info=True)
 
     def show_from_tray(self):
-        """Mostra a janela principal quando chamada pelo ícone da bandeja."""
         self.root.after(0, self.root.deiconify)
+        self.root.after(10, self.root.lift)
+        self.root.after(20, self.root.focus_force)
 
     def minimize_to_tray(self, event=None):
-        """Minimiza a aplicação para a bandeja do sistema."""
-        if self.root.state() == 'iconic' and hasattr(self, 'tray_icon') and self.tray_icon.visible:
-            self.root.withdraw()
-            logging.info("Aplicação minimizada para a bandeja.")
+        if event and event.widget == self.root and self.root.state() == 'iconic':
+            if hasattr(self, 'tray_icon') and self.tray_icon.visible:
+                self.root.withdraw()
+                logging.info("Aplicação minimizada para a bandeja.")
 
     def on_close_from_tray(self):
-        """Chamado para fechar a aplicação a partir do ícone da bandeja, sem confirmação."""
         logging.info("Fechando aplicação a partir do ícone da bandeja...")
         self.status_label_var.set("Encerrando...")
         self.root.update_idletasks()
@@ -1185,13 +1263,13 @@ class LogViewerApp:
             self.save_config()
         except Exception as e:
             logging.error(f"Erro ao salvar configuração ao sair: {e}", exc_info=True)
+
+        self._stop_event.set()
         logging.info("Aplicação encerrada (via bandeja).")
-        self.root.destroy()  # Destrói a janela principal, encerrando o loop Tkinter
+        self.root.destroy()
 
     def on_close(self):
-        """Chamado ao fechar a janela. Pergunta, salva config, para threads e destrói a janela."""
         logging.info("Iniciando processo de fechamento da aplicação (via janela)...")
-        # Usar Messagebox do ttkbootstrap que é mais integrado ao tema
         if Messagebox.okcancel("Confirmar Saída", "Deseja realmente sair do Predadores Votemap Patch?",
                                parent=self.root) == "OK":
             self.status_label_var.set("Encerrando...")
@@ -1206,6 +1284,8 @@ class LogViewerApp:
                 self.save_config()
             except Exception as e:
                 logging.error(f"Erro ao salvar configuração ao sair: {e}", exc_info=True)
+
+            self._stop_event.set()
             logging.info("Aplicação encerrada (via janela).")
             self.root.destroy()
         else:
@@ -1213,7 +1293,7 @@ class LogViewerApp:
 
 
 def main():
-    root = ttk.Window(themename="darkly")  # Ou o tema que você preferir/configurar
+    root = ttk.Window(themename="darkly")
     app = LogViewerApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.bind("<Unmap>", app.minimize_to_tray)
@@ -1222,13 +1302,13 @@ def main():
 
 
 if __name__ == '__main__':
-    def handle_exception(exc_type, exc_value, exc_traceback):
-        logging.error("Exceção não capturada:", exc_info=(exc_type, exc_value, exc_traceback))
-        # Para depuração, imprimir no console também é útil:
+    def handle_thread_exception(args):
+        logging.error(f"Exceção não capturada na thread {args.thread}:",
+                      exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
         import traceback
-        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
 
 
-    # sys.excepthook = handle_exception # Para a thread principal (Tkinter tem seu próprio tratamento)
-    threading.excepthook = handle_exception  # Para exceções em threads criadas com threading.Thread
+    threading.excepthook = handle_thread_exception
+
     main()
